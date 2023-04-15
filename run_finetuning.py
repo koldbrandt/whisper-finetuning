@@ -7,12 +7,15 @@ import random
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator, Tuple
+from loguru import logger
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import whisper
 from torch.utils.data import DataLoader
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
 from tqdm import tqdm
 from transformers import get_linear_schedule_with_warmup
 from whisper import Whisper
@@ -20,6 +23,13 @@ from whisper.tokenizer import get_tokenizer
 
 from dataloader import get_dataloader
 
+# writer = SummaryWriter()
+
+# start a new wandb run to track this script
+wandb.init(
+    # set the wandb project where this run will be logged
+    project="Whisper",
+)
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
@@ -224,9 +234,14 @@ def main_loop(
             args.train_only_decoder,
             args.max_grad_norm,
         )
+        # writer.add_scalar("Loss/train", train_loss, step)
+        wandb.log({"Loss/train": train_loss})
+
         pbar.set_postfix({"loss": train_loss})
         if step % args.eval_steps == 0:
             eval_loss = evaluate(model, dev_loader)
+            # writer.add_scalar("Loss/eval", eval_loss, step)
+            wandb.log({"Loss/eval": eval_loss})
             tqdm.write(f"Step {step}: validation loss={eval_loss}")
             if eval_loss < min_loss:
                 min_loss = eval_loss
@@ -246,6 +261,7 @@ def main():
     save_args(args, f"{args.save_dir}/args.json")
 
     tokenizer = get_tokenizer(multilingual=".en" not in args.model, task="transcribe")
+    
     model = whisper.load_model(args.model, args.device)
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
     max_prompt_length = model.dims.n_text_ctx // 2 - 1
@@ -254,7 +270,9 @@ def main():
     # get all documents from --train-folder
     train_json = []
     if args.train_folder is not None:
+        print(os.path.join(args.train_folder, "*"))
         train_json = glob.glob(os.path.join(args.train_folder, "*"))
+
 
     if train_json == []:
         print("No training files found in --train-folder")
@@ -318,3 +336,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # writer.close()

@@ -23,9 +23,19 @@ from dataloader import get_dataset, collate_fn
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 from Whisper_no_sparse import Whisper_no_sparse
+
+# writer = SummaryWriter()
+
+# start a new wandb run to track this script
+wandb.init(
+    # set the wandb project where this run will be logged
+    project="Whisper",
+)
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
@@ -218,10 +228,14 @@ class Trainer:
         for step in range(range(1, args.train_steps + 1)):
             start = time.time()
             train_loss = self._train_step()
+            # writer.add_scalar("Loss/train", train_loss, step)
+            wandb.log({"Loss/train": train_loss})
             end = time.time()
             print(f"Step {step}: training loss={train_loss}, time={end-start}")
             if step % self.eval_steps == 0 and self.gpu_id == 0:
                 eval_loss = self._evaluate()
+                # writer.add_scalar("Loss/eval", eval_loss, step)
+                wandb.log({"Loss/eval": eval_loss})
                 tqdm.write(f"Step {step}: validation loss={eval_loss}")
                 if eval_loss < min_loss:
                     min_loss = eval_loss
@@ -367,3 +381,4 @@ if __name__ == "__main__":
     Path(args.save_dir).mkdir(parents=True, exist_ok=True)
     save_args(args, f"{args.save_dir}/args.json")
     mp.spawn(main, args=(args,world_size), nprocs=world_size)
+    # writer.close()
