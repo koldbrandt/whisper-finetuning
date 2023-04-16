@@ -6,7 +6,7 @@ import os
 import random
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterator, Tuple
+from typing import Iterator, Tuple, List
 from loguru import logger
 
 import numpy as np
@@ -19,7 +19,8 @@ import wandb
 from tqdm import tqdm
 from transformers import get_linear_schedule_with_warmup
 from whisper import Whisper
-from whisper.tokenizer import get_tokenizer
+from whisper.tokenizer import get_tokenizer, Tokenizer
+from utilities import get_normalizer, calculate_WER
 
 from dataloader import get_dataloader
 
@@ -139,7 +140,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="Number of workers for the dataloader")
     return parser
 
-
 def train_step(
     model: Whisper,
     train_iter: Iterator,
@@ -176,15 +176,18 @@ def train_step(
 
 
 @torch.no_grad()
-def evaluate(model: Whisper, dev_loader: DataLoader) -> float:
+def evaluate(model: Whisper, dev_loader: DataLoader, tokenizer: Tokenizer, normalizer) -> float:
     model.eval()
     total_loss = 0
+    total_wer = 0
     for x, y_in, y_out in tqdm(dev_loader):
         x, y_in, y_out = x.to(model.device), y_in.to(model.device), y_out.to(model.device)
         logits = model(x, y_in)
         loss = F.cross_entropy(logits.transpose(1, 2), y_out)
+        wer = calculate_WER(logits.argmax(dim=-1), y_out, normalizer, tokenizer)
+        total_wer += wer
         total_loss += loss.item()
-    return total_loss / len(dev_loader)
+    return (total_loss / len(dev_loader)), (total_wer / len(dev_loader))
 
 
 def save_model(model: Whisper, save_path: str) -> None:
@@ -218,10 +221,13 @@ def main_loop(
     dev_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LambdaLR,
+    tokenizer: Tokenizer,
+    normalizer,
     args: argparse.Namespace,
 ) -> None:
-    min_loss = evaluate(model, dev_loader)
-    print(f"Initial loss: {min_loss}")
+    min_loss, init_wer = evaluate(model, dev_loader, tokenizer, normalizer)
+    wandb.log({"Loss/eval": min_loss, "WER/eval": init_wer}, step=0)
+    print(f"Initial loss: {min_loss}, Initial WER: {init_wer}")
     pbar = tqdm(range(1, args.train_steps + 1))
     train_iter = infinite_iter(train_loader)
     for step in pbar:
@@ -235,14 +241,14 @@ def main_loop(
             args.max_grad_norm,
         )
         # writer.add_scalar("Loss/train", train_loss, step)
-        wandb.log({"Loss/train": train_loss})
+        wandb.log({"Loss/train": train_loss}, step=step)
 
         pbar.set_postfix({"loss": train_loss})
         if step % args.eval_steps == 0:
-            eval_loss = evaluate(model, dev_loader)
+            eval_loss, eval_wer = evaluate(model, dev_loader, tokenizer, normalizer)
             # writer.add_scalar("Loss/eval", eval_loss, step)
-            wandb.log({"Loss/eval": eval_loss})
-            tqdm.write(f"Step {step}: validation loss={eval_loss}")
+            wandb.log({"Loss/eval": eval_loss, "WER/eval": eval_wer}, step=step)
+            tqdm.write(f"Step {step}: validation loss={eval_loss}, validation WER={eval_wer}")
             if eval_loss < min_loss:
                 min_loss = eval_loss
                 save_model(model, f"{args.save_dir}/best_model.pt")
@@ -261,6 +267,8 @@ def main():
     save_args(args, f"{args.save_dir}/args.json")
 
     tokenizer = get_tokenizer(multilingual=".en" not in args.model, task="transcribe")
+    normalizer = get_normalizer(multilingual=".en" not in args.model)
+
     
     model = whisper.load_model(args.model, args.device)
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
@@ -330,6 +338,8 @@ def main():
         dev_loader=dev_loader,
         optimizer=optimizer,
         scheduler=scheduler,
+        tokenizer=tokenizer,
+        normalizer=normalizer,
         args=args,
     )
 
