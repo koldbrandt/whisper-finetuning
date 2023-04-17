@@ -19,7 +19,7 @@ from transformers import get_linear_schedule_with_warmup
 from whisper import Whisper
 from whisper.tokenizer import get_tokenizer
 
-from dataloader import get_dataset, collate_fn
+from dataloader import get_dataloader, get_dataset, collate_fn
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
@@ -284,7 +284,7 @@ def prepare_dataloader(dataset: Dataset, batch_size: int):
     )
 
 
-def get_dataloaders(args, tokenizer, fp16, max_prompt_length):
+def get_dataloaders(args, tokenizer, fp16, max_prompt_length, device):
     train_json = []
     if args.train_folder is not None:
         train_json = glob.glob(os.path.join(args.train_folder, "*"))
@@ -303,23 +303,28 @@ def get_dataloaders(args, tokenizer, fp16, max_prompt_length):
     )
     train_loader = prepare_dataloader(dataset, args.batch_size)
 
-    dev_json = []
-    if args.train_folder is not None:
-        dev_json = glob.glob(os.path.join(args.dev_folder, "*"))
-    if dev_json == []:
-        print("No training files found in --train-folder")
-        exit(1)
-    print("Build train loader done, with {} batches".format(len(train_loader)))
-    dataset = get_dataset(
-        json=dev_json,
-        tokenizer=tokenizer,
-        fp16=fp16,
-        no_timestamps_training=args.no_timestamps_training,
-        max_prompt_length=max_prompt_length,
-        prompt_use_rate=args.prompt_use_rate,
-        no_timestamps_rate=args.no_timestamps_rate,
-    )
-    dev_loader = prepare_dataloader(dataset, args.dev_batch_size)
+    dev_loader = None
+    if device == 0:
+        dev_json = []
+        if args.train_folder is not None:
+            dev_json = glob.glob(os.path.join(args.dev_folder, "*"))
+        if dev_json == []:
+            print("No training files found in --train-folder")
+            exit(1)
+        print("Build train loader done, with {} batches".format(len(train_loader)))
+        dev_loader = get_dataloader(
+                json=dev_json,
+                tokenizer=tokenizer,
+                batch_size=args.dev_batch_size,
+                fp16=fp16,
+                no_timestamps_training=args.no_timestamps_training,
+                max_prompt_length=max_prompt_length,
+                # always use prompts and timestamps for validation to make it deterministic
+                prompt_use_rate=1.0,
+                no_timestamps_rate=0.0,
+                shuffle=False,
+                workers=args.num_workers,
+            )
 
     return train_loader, dev_loader
 
@@ -367,7 +372,7 @@ def main(rank, args, world_size):
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
     max_prompt_length = model.dims.n_text_ctx // 2 - 1
     fp16 = args.device == "cuda"
-    train_data, dev_data = get_dataloaders(args, tokenizer, fp16, max_prompt_length)
+    train_data, dev_data = get_dataloaders(args, tokenizer, fp16, max_prompt_length, rank)
     # to be able to shuffle the data
     train_data.sampler.set_epoch(0)
     train_data = infinite_iter(train_data)
