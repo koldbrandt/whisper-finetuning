@@ -30,6 +30,7 @@ from dataloader import get_dataloader
 wandb.init(
     # set the wandb project where this run will be logged
     project="Whisper",
+    entity="fuzzy-fish-waffle",
 )
 
 def get_parser() -> argparse.ArgumentParser:

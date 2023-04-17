@@ -37,6 +37,7 @@ from utilities import get_normalizer, calculate_WER
 wandb.init(
     # set the wandb project where this run will be logged
     project="Whisper",
+    entity="fuzzy-fish-waffle",
 )
 
 def get_parser() -> argparse.ArgumentParser:
@@ -167,7 +168,7 @@ class Trainer:
                 optimizer: torch.optim.Optimizer,
                 scheduler: torch.optim.lr_scheduler._LRScheduler,
                 gpu_id: int,
-                Tokenizer: Tokenizer,
+                tokenizer: Tokenizer,
                 normalizer,
                 args)-> None:
         self.model = model.to(f'cuda:{gpu_id}')
@@ -176,6 +177,8 @@ class Trainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.gpu_id = gpu_id
+        self.tokenizer = tokenizer
+        self.normalizer = normalizer
         self.grad_step = args.accum_grad_steps
         self.train_steps = args.train_steps
         self.eval_steps = args.eval_steps
@@ -230,9 +233,10 @@ class Trainer:
         torch.save({"model_state_dict": ckp, "dims": asdict(self.model.module.dims)}, save_path)
     
     def train(self):
-        min_loss, init_wer = self._evaluate()
-        wandb.log({"Loss/eval": min_loss, "WER/eval": init_wer}, step=0)
-        print(f"Initial loss: {min_loss}, Initial WER: {init_wer}")
+        if self.gpu_id == 0:
+            min_loss, init_wer = self._evaluate()
+            wandb.log({"Loss/eval": min_loss, "WER/eval": init_wer}, step=0)
+            print(f"Initial loss: {min_loss}, Initial WER: {init_wer}")
         for step in range(1, self.train_steps + 1):
             start = time.time()
             train_loss = self._train_step()
