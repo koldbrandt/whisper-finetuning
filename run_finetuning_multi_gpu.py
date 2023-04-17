@@ -367,3 +367,4 @@ if __name__ == "__main__":
     Path(args.save_dir).mkdir(parents=True, exist_ok=True)
     save_args(args, f"{args.save_dir}/args.json")
     mp.spawn(main, args=(args,world_size), nprocs=world_size)
+    # yes
