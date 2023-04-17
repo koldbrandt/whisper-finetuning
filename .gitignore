@@ -5,6 +5,7 @@ __pycache__/
 
 runs/
 datasets/
+wandb/
 # C extensions
 *.so
 
