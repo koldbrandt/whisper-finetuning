@@ -23,9 +23,21 @@ from dataloader import get_dataset, collate_fn
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 from Whisper_no_sparse import Whisper_no_sparse
+from whisper.tokenizer import get_tokenizer, Tokenizer
+from utilities import get_normalizer, calculate_WER
+
+# writer = SummaryWriter()
+
+# start a new wandb run to track this script
+wandb.init(
+    # set the wandb project where this run will be logged
+    project="Whisper",
+)
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
@@ -155,6 +167,8 @@ class Trainer:
                 optimizer: torch.optim.Optimizer,
                 scheduler: torch.optim.lr_scheduler._LRScheduler,
                 gpu_id: int,
+                Tokenizer: Tokenizer,
+                normalizer,
                 args)-> None:
         self.model = model.to(f'cuda:{gpu_id}')
         self.train_data = train_data
@@ -200,12 +214,15 @@ class Trainer:
     def _evaluate(self):
         self.model.eval()
         total_loss = 0
+        total_wer = 0
         for x, y_in, y_out in tqdm(self.dev_data):
             x, y_in, y_out = x.to(self.gpu_id), y_in.to(self.gpu_id), y_out.to(self.gpu_id)
             logits = self.model(x, y_in)
             loss = F.cross_entropy(logits.transpose(1, 2), y_out)
+            wer = calculate_WER(logits.argmax(dim=-1), y_out, self.normalizer, self.tokenizer)
+            total_wer += wer
             total_loss += loss.item()
-        return total_loss / len(self.dev_data)
+        return (total_loss / len(self.dev_data)), (total_wer / len(self.dev_data))
     
     def _save_checkpoint(self, save_path: str):
         ckp = self.model.module.state_dict()
@@ -213,15 +230,20 @@ class Trainer:
         torch.save({"model_state_dict": ckp, "dims": asdict(self.model.module.dims)}, save_path)
     
     def train(self):
-        min_loss = self._evaluate()
-        print(f"Initial loss: {min_loss}")
+        min_loss, init_wer = self._evaluate()
+        wandb.log({"Loss/eval": min_loss, "WER/eval": init_wer}, step=0)
+        print(f"Initial loss: {min_loss}, Initial WER: {init_wer}")
         for step in range(1, self.train_steps + 1):
             start = time.time()
             train_loss = self._train_step()
+            # writer.add_scalar("Loss/train", train_loss, step)
+            wandb.log({"Loss/train": train_loss}, step=step)
             end = time.time()
             print(f"Step {step}: training loss={train_loss}, time={end-start}")
             if step % self.eval_steps == 0 and self.gpu_id == 0:
-                eval_loss = self._evaluate()
+                eval_loss, eval_wer = self._evaluate()
+                # writer.add_scalar("Loss/eval", eval_loss, step)
+                wandb.log({"Loss/eval": eval_loss, "WER/eval": eval_wer}, step=step)
                 tqdm.write(f"Step {step}: validation loss={eval_loss}")
                 if eval_loss < min_loss:
                     min_loss = eval_loss
@@ -341,6 +363,7 @@ def main(rank, args, world_size):
     ddp_setup(rank, world_size)
     tokenizer, model = load_train_objs(args)
     optimizer, scheduler = get_optimizer_scheduler(model, args)
+    normalizer = get_normalizer(multilingual=".en" not in args.model)
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
     max_prompt_length = model.dims.n_text_ctx // 2 - 1
     fp16 = args.device == "cuda"
@@ -354,6 +377,8 @@ def main(rank, args, world_size):
         scheduler=scheduler,
         train_data=train_data,
         dev_data=dev_data,
+        normalizer=normalizer,
+        tokenizer=tokenizer,
         gpu_id=rank,
         args=args,
     )
@@ -367,4 +392,4 @@ if __name__ == "__main__":
     Path(args.save_dir).mkdir(parents=True, exist_ok=True)
     save_args(args, f"{args.save_dir}/args.json")
     mp.spawn(main, args=(args,world_size), nprocs=world_size)
-    # yes
+    # writer.close()
