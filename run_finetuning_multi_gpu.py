@@ -327,7 +327,7 @@ def get_dataloaders(args, tokenizer, fp16, max_prompt_length, device):
                 prompt_use_rate=1.0,
                 no_timestamps_rate=0.0,
                 shuffle=False,
-                workers=args.num_workers,
+                workers=0,
             )
 
     return train_loader, dev_loader
@@ -339,7 +339,7 @@ def ddp_setup(rank, world_size):
         world_size: Total number of processes
     """
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
+    os.environ["MASTER_PORT"] = "12366"
     init_process_group(backend="nccl", rank=rank, world_size=world_size) # Options NCCl, Gloo, MPI
 
 def load_train_objs(args):
