@@ -10,7 +10,9 @@ from whisper.utils import get_writer
 
 
 def get_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Transcribe audio files with a Whisper model")
+    parser = argparse.ArgumentParser(
+        description="Transcribe audio files with a Whisper model"
+    )
     parser.add_argument(
         "--audio-dir",
         type=str,
@@ -27,7 +29,8 @@ def get_parser() -> argparse.ArgumentParser:
         "--language",
         type=str,
         default="en",
-        choices=sorted(LANGUAGES.keys()) + sorted([k.title() for k in TO_LANGUAGE_CODE.keys()]),
+        choices=sorted(LANGUAGES.keys())
+        + sorted([k.title() for k in TO_LANGUAGE_CODE.keys()]),
         help=(
             "Language of the data. The corresponding language tag will be used as an input to the "
             "decoder of the Whisper model."
@@ -38,7 +41,9 @@ def get_parser() -> argparse.ArgumentParser:
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device to use for PyTorch inference",
     )
-    parser.add_argument("--model", default="large", help="Name or path to the Whisper model to use")
+    parser.add_argument(
+        "--model", default="large", help="Name or path to the Whisper model to use"
+    )
     parser.add_argument(
         "--task",
         type=str,
@@ -59,7 +64,9 @@ def main():
     writer = get_writer("srt", args.save_dir)
 
     for audio_path in tqdm(list(Path(args.audio_dir).iterdir())):
-        result = model.transcribe(task=args.task, audio=str(audio_path), language=args.language)
+        result = model.transcribe(
+            task=args.task, audio=str(audio_path), language=args.language
+        )
         writer(result, str(audio_path))
 
 

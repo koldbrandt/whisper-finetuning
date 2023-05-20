@@ -6,23 +6,23 @@ import os
 import random
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterator, Tuple, List
-from loguru import logger
+from typing import Iterator, List, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import whisper
+from loguru import logger
 from torch.utils.data import DataLoader
-# from torch.utils.tensorboard import SummaryWriter
-import wandb
 from tqdm import tqdm
 from transformers import get_linear_schedule_with_warmup
 from whisper import Whisper
-from whisper.tokenizer import get_tokenizer, Tokenizer
-from utilities import get_normalizer, calculate_WER
+from whisper.tokenizer import Tokenizer, get_tokenizer
 
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
 from dataloader import get_dataloader
+from utilities import calculate_WER, get_normalizer
 
 # writer = SummaryWriter()
 
@@ -32,6 +32,7 @@ wandb.init(
     project="Whisper",
     entity="fuzzy-fish-waffle",
 )
+
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
@@ -48,8 +49,12 @@ def get_parser() -> argparse.ArgumentParser:
         required=True,
         help="foler, will look for all json files in the folder",
     )
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for training")
-    parser.add_argument("--dev-batch-size", type=int, default=16, help="Batch size for validation")
+    parser.add_argument(
+        "--batch-size", type=int, default=1, help="Batch size for training"
+    )
+    parser.add_argument(
+        "--dev-batch-size", type=int, default=16, help="Batch size for validation"
+    )
     parser.add_argument(
         "--no-timestamps-training",
         action="store_true",
@@ -86,8 +91,12 @@ def get_parser() -> argparse.ArgumentParser:
         choices=whisper.available_models(),
         help="name of the Whisper model to use",
     )
-    parser.add_argument("--train-only-decoder", action="store_true", help="train only the decoder")
-    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate for training")
+    parser.add_argument(
+        "--train-only-decoder", action="store_true", help="train only the decoder"
+    )
+    parser.add_argument(
+        "--lr", type=float, default=1e-5, help="Learning rate for training"
+    )
     parser.add_argument(
         "--accum-grad-steps",
         type=int,
@@ -138,8 +147,10 @@ def get_parser() -> argparse.ArgumentParser:
         "--num-workers",
         type=int,
         default=4,
-        help="Number of workers for the dataloader")
+        help="Number of workers for the dataloader",
+    )
     return parser
+
 
 def train_step(
     model: Whisper,
@@ -154,7 +165,11 @@ def train_step(
     total_loss = 0
     for _ in range(accum_grad_steps):
         x, y_in, y_out = next(train_iter)
-        x, y_in, y_out = x.to(model.device), y_in.to(model.device), y_out.to(model.device)
+        x, y_in, y_out = (
+            x.to(model.device),
+            y_in.to(model.device),
+            y_out.to(model.device),
+        )
 
         if train_only_decoder:
             with torch.no_grad():
@@ -177,12 +192,18 @@ def train_step(
 
 
 @torch.no_grad()
-def evaluate(model: Whisper, dev_loader: DataLoader, tokenizer: Tokenizer, normalizer) -> float:
+def evaluate(
+    model: Whisper, dev_loader: DataLoader, tokenizer: Tokenizer, normalizer
+) -> float:
     model.eval()
     total_loss = 0
     total_wer = 0
     for x, y_in, y_out in tqdm(dev_loader):
-        x, y_in, y_out = x.to(model.device), y_in.to(model.device), y_out.to(model.device)
+        x, y_in, y_out = (
+            x.to(model.device),
+            y_in.to(model.device),
+            y_out.to(model.device),
+        )
         logits = model(x, y_in)
         loss = F.cross_entropy(logits.transpose(1, 2), y_out)
         wer = calculate_WER(logits.argmax(dim=-1), y_out, normalizer, tokenizer)
@@ -195,7 +216,9 @@ def save_model(model: Whisper, save_path: str) -> None:
     # save model in half precision to save space
     model = copy.deepcopy(model).half()
     # save model weights and config in a dictionary that can be loaded with `whisper.load_model`
-    torch.save({"model_state_dict": model.state_dict(), "dims": asdict(model.dims)}, save_path)
+    torch.save(
+        {"model_state_dict": model.state_dict(), "dims": asdict(model.dims)}, save_path
+    )
 
 
 def set_seed(seed: int):
@@ -249,7 +272,9 @@ def main_loop(
             eval_loss, eval_wer = evaluate(model, dev_loader, tokenizer, normalizer)
             # writer.add_scalar("Loss/eval", eval_loss, step)
             wandb.log({"Loss/eval": eval_loss, "WER/eval": eval_wer}, step=step)
-            tqdm.write(f"Step {step}: validation loss={eval_loss}, validation WER={eval_wer}")
+            tqdm.write(
+                f"Step {step}: validation loss={eval_loss}, validation WER={eval_wer}"
+            )
             if eval_loss < min_loss:
                 min_loss = eval_loss
                 save_model(model, f"{args.save_dir}/best_model.pt")
@@ -270,7 +295,6 @@ def main():
     tokenizer = get_tokenizer(multilingual=".en" not in args.model, task="transcribe")
     normalizer = get_normalizer(multilingual=".en" not in args.model)
 
-    
     model = whisper.load_model(args.model, args.device)
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
     max_prompt_length = model.dims.n_text_ctx // 2 - 1
@@ -281,7 +305,6 @@ def main():
     if args.train_folder is not None:
         print(os.path.join(args.train_folder, "*"))
         train_json = glob.glob(os.path.join(args.train_folder, "*"))
-
 
     if train_json == []:
         print("No training files found in --train-folder")
@@ -296,9 +319,8 @@ def main():
         prompt_use_rate=args.prompt_use_rate,
         no_timestamps_rate=args.no_timestamps_rate,
         shuffle=True,
-        workers=args.num_workers
+        workers=args.num_workers,
     )
-
 
     dev_json = []
     if args.train_folder is not None:
@@ -325,12 +347,16 @@ def main():
         try:
             import bitsandbytes as bnb
         except ImportError:
-            raise ImportError("For using Adam 8bit optimizer you need to have bitsandbytes installed.")
+            raise ImportError(
+                "For using Adam 8bit optimizer you need to have bitsandbytes installed."
+            )
         optimizer = bnb.optim.Adam8bit(model.parameters(), lr=args.lr)
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=args.train_steps
+        optimizer,
+        num_warmup_steps=args.warmup_steps,
+        num_training_steps=args.train_steps,
     )
 
     main_loop(

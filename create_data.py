@@ -70,10 +70,13 @@ def get_parser() -> argparse.ArgumentParser:
         "--language",
         type=str,
         default="en",
-        choices=sorted(LANGUAGES.keys()) + sorted([k.title() for k in TO_LANGUAGE_CODE.keys()]),
+        choices=sorted(LANGUAGES.keys())
+        + sorted([k.title() for k in TO_LANGUAGE_CODE.keys()]),
         help="Language of the data",
     )
-    parser.add_argument("--output", type=str, default="data.json", help="Path to output json file")
+    parser.add_argument(
+        "--output", type=str, default="data.json", help="Path to output json file"
+    )
     parser.add_argument(
         "--dump-dir", type=str, default="dump", help="Directory to dump audio files"
     )
@@ -127,7 +130,9 @@ def get_parser() -> argparse.ArgumentParser:
             "in the transcriptions."
         ),
     )
-    parser.add_argument("--normalize-unicode", action="store_true", help="Normalize unicode")
+    parser.add_argument(
+        "--normalize-unicode", action="store_true", help="Normalize unicode"
+    )
     return parser
 
 
@@ -154,6 +159,7 @@ class Record:
     A single training instance for Whisper.
     `text` can include timestamps in the format of <|0.00|>.
     """
+
     audio_path: Union[str, List[float]]
     text: str  # text including timestamps
     language: str = "en"
@@ -199,7 +205,9 @@ class DataProcessor:
 
         self._verify_args()
 
-        self.tokenizer = get_tokenizer(multilingual=(self.tokenizer_type == "multilingual"))
+        self.tokenizer = get_tokenizer(
+            multilingual=(self.tokenizer_type == "multilingual")
+        )
         Path(self.dump_dir).mkdir(parents=True, exist_ok=True)
 
     def _verify_args(self) -> None:
@@ -216,7 +224,9 @@ class DataProcessor:
                 )
         else:
             if not self.data_file:
-                raise ValueError("`data_file` must be set when `with_timestamps` is False")
+                raise ValueError(
+                    "`data_file` must be set when `with_timestamps` is False"
+                )
 
         if self.language not in LANGUAGES:
             if self.language in TO_LANGUAGE_CODE:
@@ -255,7 +265,9 @@ class DataProcessor:
                     )
                     continue
 
-                record = Record(audio_path=audio_path, text=text, language=self.language)
+                record = Record(
+                    audio_path=audio_path, text=text, language=self.language
+                )
                 records.append(record)
 
         self.write_records(records, self.output)
@@ -272,7 +284,9 @@ class DataProcessor:
                     )
                 except Exception as e:
                     print(e)
-                    print(f"Skipping {transcript_path} because of an error in the transcript")
+                    print(
+                        f"Skipping {transcript_path} because of an error in the transcript"
+                    )
                     continue
             elif (Path(self.transcript_dir) / f"{speech_id}.vtt").exists():
                 transcript_path = Path(self.transcript_dir) / f"{speech_id}.vtt"
@@ -282,12 +296,16 @@ class DataProcessor:
                     )
                 except Exception as e:
                     print(e)
-                    print(f"Skipping {transcript_path} because of an error in the transcript")
+                    print(
+                        f"Skipping {transcript_path} because of an error in the transcript"
+                    )
                     continue
             else:
                 raise FileNotFoundError(f"Transcript file not found for {speech_id}")
 
-            records = self._create_records_with_timestamps(utterances_for_speech, audio_path)
+            records = self._create_records_with_timestamps(
+                utterances_for_speech, audio_path
+            )
             self.write_records(records, self.output)
 
     @staticmethod
@@ -298,7 +316,9 @@ class DataProcessor:
         with open(transcript_path, encoding="utf-8") as f:
             lines = f.readlines()
             timestamps_indices = [i for i, line in enumerate(lines) if " --> " in line]
-            timestamps_indices.append(len(lines) + 1)  # a dummy index to make the loop below simple
+            timestamps_indices.append(
+                len(lines) + 1
+            )  # a dummy index to make the loop below simple
 
             for i in range(len(timestamps_indices) - 1):
                 utterance_start = timestamps_indices[i]
@@ -312,7 +332,12 @@ class DataProcessor:
                 # `next_utterance_start - 2` corresponds to a newline character, thus the text is
                 # included between [`utterance_start + 1`, `next_utterance_start - 2`).
                 text = " ".join(
-                    [line.strip() for line in lines[utterance_start + 1 : next_utterance_start - 2]]
+                    [
+                        line.strip()
+                        for line in lines[
+                            utterance_start + 1 : next_utterance_start - 2
+                        ]
+                    ]
                 ).strip()
                 if normalize_unicode:
                     text = unicodedata.normalize("NFKC", text)
@@ -333,7 +358,9 @@ class DataProcessor:
         with open(transcript_path, encoding="utf-8") as f:
             lines = f.readlines()
             timestamps_indices = [i for i, line in enumerate(lines) if " --> " in line]
-            timestamps_indices.append(len(lines) + 1)  # a dummy index to make the loop below simple
+            timestamps_indices.append(
+                len(lines) + 1
+            )  # a dummy index to make the loop below simple
 
             for i in range(len(timestamps_indices) - 1):
                 utterance_start = timestamps_indices[i]
@@ -346,7 +373,12 @@ class DataProcessor:
                 # `next_utterance_start - 1` corresponds to a newline, thus the text is included
                 # between [`utterance_start + 1`, `next_utterance_start - 1`).
                 text = " ".join(
-                    [line.strip() for line in lines[utterance_start + 1 : next_utterance_start - 1]]
+                    [
+                        line.strip()
+                        for line in lines[
+                            utterance_start + 1 : next_utterance_start - 1
+                        ]
+                    ]
                 ).strip()
                 if normalize_unicode:
                     text = unicodedata.normalize("NFKC", text)
@@ -381,7 +413,9 @@ class DataProcessor:
                 idx += 1
                 continue
 
-            segment_audio_path = self._save_segment_audio(audio, segment_start, dump_dir)
+            segment_audio_path = self._save_segment_audio(
+                audio, segment_start, dump_dir
+            )
             prompt = self._get_prompt(prompt_buffer)
 
             segment_utterances = []
@@ -403,9 +437,13 @@ class DataProcessor:
             tokens_length = 0
             segment_text = []
             for utterance in segment_utterances:
-                start_token = self._get_time_token(utterance.start, segment_start, audio_path)
+                start_token = self._get_time_token(
+                    utterance.start, segment_start, audio_path
+                )
                 if utterance.end <= segment_end:
-                    end_token = self._get_time_token(utterance.end, segment_start, audio_path)
+                    end_token = self._get_time_token(
+                        utterance.end, segment_start, audio_path
+                    )
                     utterance_text = self._add_leading_space(utterance.text)
                     segment_text.extend([start_token, utterance_text, end_token])
                     new_prompt_length = len(self.tokenizer.encode(utterance_text)) + 2
@@ -448,7 +486,9 @@ class DataProcessor:
 
         return records
 
-    def _save_segment_audio(self, audio: torch.Tensor, segment_start: int, dump_dir: Path) -> str:
+    def _save_segment_audio(
+        self, audio: torch.Tensor, segment_start: int, dump_dir: Path
+    ) -> str:
         audio_start_idx = int(segment_start * SAMPLE_RATE / 1000)
         segment_audio_path = str((dump_dir / f"{segment_start}.wav").absolute())
         segment_audio = audio[
@@ -457,7 +497,9 @@ class DataProcessor:
         torchaudio.save(segment_audio_path, segment_audio.unsqueeze(0), SAMPLE_RATE)
         return segment_audio_path
 
-    def _is_valid_utterances(self, utterances: List[Utterance], segment_start: int) -> bool:
+    def _is_valid_utterances(
+        self, utterances: List[Utterance], segment_start: int
+    ) -> bool:
         if len(utterances) == 0:
             return True
 
@@ -526,7 +568,8 @@ class DataProcessor:
 
         time_in_segment = time - segment_start
         nearest_timestamp = (
-            round(time_in_segment / self.timestamp_resolution) * self.timestamp_resolution
+            round(time_in_segment / self.timestamp_resolution)
+            * self.timestamp_resolution
         )  # in milliseconds
         time_token = f"<|{nearest_timestamp / 1000:.2f}|>"
         return time_token

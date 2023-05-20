@@ -4,32 +4,30 @@ import glob
 import json
 import os
 import random
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator, Tuple
 
-import time
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 import torch.nn.functional as F
 import whisper
+from torch.distributed import destroy_process_group, init_process_group
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from transformers import get_linear_schedule_with_warmup
 from whisper import Whisper
-from whisper.tokenizer import get_tokenizer
+from whisper.tokenizer import Tokenizer, get_tokenizer
 
-from dataloader import get_dataloader, get_dataset, collate_fn
-
-import torch.multiprocessing as mp
-from torch.utils.data.distributed import DistributedSampler
 # from torch.utils.tensorboard import SummaryWriter
 import wandb
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
+from dataloader import collate_fn, get_dataloader, get_dataset
+from utilities import calculate_WER, get_normalizer
 from Whisper_no_sparse import Whisper_no_sparse
-from whisper.tokenizer import get_tokenizer, Tokenizer
-from utilities import get_normalizer, calculate_WER
 
 # writer = SummaryWriter()
 
@@ -39,6 +37,7 @@ wandb.init(
     project="Whisper",
     entity="fuzzy-fish-waffle",
 )
+
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
@@ -55,8 +54,12 @@ def get_parser() -> argparse.ArgumentParser:
         required=True,
         help="foler, will look for all json files in the folder",
     )
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for training")
-    parser.add_argument("--dev-batch-size", type=int, default=16, help="Batch size for validation")
+    parser.add_argument(
+        "--batch-size", type=int, default=1, help="Batch size for training"
+    )
+    parser.add_argument(
+        "--dev-batch-size", type=int, default=16, help="Batch size for validation"
+    )
     parser.add_argument(
         "--no-timestamps-training",
         action="store_true",
@@ -93,8 +96,12 @@ def get_parser() -> argparse.ArgumentParser:
         choices=whisper.available_models(),
         help="name of the Whisper model to use",
     )
-    parser.add_argument("--train-only-decoder", action="store_true", help="train only the decoder")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for training")
+    parser.add_argument(
+        "--train-only-decoder", action="store_true", help="train only the decoder"
+    )
+    parser.add_argument(
+        "--lr", type=float, default=1e-4, help="Learning rate for training"
+    )
     parser.add_argument(
         "--accum-grad-steps",
         type=int,
@@ -145,33 +152,33 @@ def get_parser() -> argparse.ArgumentParser:
         "--num-workers",
         type=int,
         default=4,
-        help="Number of workers for the dataloader")
-    
+        help="Number of workers for the dataloader",
+    )
+
     parser.add_argument(
-        "--weight-decay",
-        type=float,
-        default=0.1,
-        help="Weight decay for the optimizer")
-    
+        "--weight-decay", type=float, default=0.1, help="Weight decay for the optimizer"
+    )
+
     parser.add_argument(
-        "--adam-eps",
-        type=float,
-        default=1e-6,
-        help="Epsilon for the Adam optimizer")
+        "--adam-eps", type=float, default=1e-6, help="Epsilon for the Adam optimizer"
+    )
     return parser
 
+
 class Trainer:
-    def __init__(self, 
-                model: torch.nn.Module, 
-                train_data: DataLoader,
-                dev_data: DataLoader,
-                optimizer: torch.optim.Optimizer,
-                scheduler: torch.optim.lr_scheduler._LRScheduler,
-                gpu_id: int,
-                tokenizer: Tokenizer,
-                normalizer,
-                args)-> None:
-        self.model = model.to(f'cuda:{gpu_id}')
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        train_data: DataLoader,
+        dev_data: DataLoader,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler._LRScheduler,
+        gpu_id: int,
+        tokenizer: Tokenizer,
+        normalizer,
+        args,
+    ) -> None:
+        self.model = model.to(f"cuda:{gpu_id}")
         self.train_data = train_data
         self.dev_data = dev_data
         self.optimizer = optimizer
@@ -187,13 +194,17 @@ class Trainer:
         self.save_dir = args.save_dir
         self.save_all_checkpoints = args.save_all_checkpoints
         self.model = DDP(self.model, device_ids=[self.gpu_id])
-    
+
     def _train_step(self):
         self.model.train()
         total_loss = 0
         for _ in range(self.grad_step):
             x, y_in, y_out = next(self.train_data)
-            x, y_in, y_out = x.to(self.gpu_id), y_in.to(self.gpu_id), y_out.to(self.gpu_id)
+            x, y_in, y_out = (
+                x.to(self.gpu_id),
+                y_in.to(self.gpu_id),
+                y_out.to(self.gpu_id),
+            )
 
             if self.train_only_decoder:
                 with torch.no_grad():
@@ -207,31 +218,41 @@ class Trainer:
             loss.backward()
             total_loss += loss.item()
 
-        torch.nn.utils.clip_grad_norm_(self.model.module.parameters(), self.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            self.model.module.parameters(), self.max_grad_norm
+        )
         self.optimizer.step()
         self.scheduler.step()
         self.optimizer.zero_grad()
         return total_loss
-    
+
     @torch.no_grad()
     def _evaluate(self):
         self.model.eval()
         total_loss = 0
         total_wer = 0
         for x, y_in, y_out in tqdm(self.dev_data):
-            x, y_in, y_out = x.to(self.gpu_id), y_in.to(self.gpu_id), y_out.to(self.gpu_id)
+            x, y_in, y_out = (
+                x.to(self.gpu_id),
+                y_in.to(self.gpu_id),
+                y_out.to(self.gpu_id),
+            )
             logits = self.model(x, y_in)
             loss = F.cross_entropy(logits.transpose(1, 2), y_out)
-            wer = calculate_WER(logits.argmax(dim=-1), y_out, self.normalizer, self.tokenizer)
+            wer = calculate_WER(
+                logits.argmax(dim=-1), y_out, self.normalizer, self.tokenizer
+            )
             total_wer += wer
             total_loss += loss.item()
         return (total_loss / len(self.dev_data)), (total_wer / len(self.dev_data))
-    
+
     def _save_checkpoint(self, save_path: str):
         ckp = self.model.module.state_dict()
         # save model weights and config in a dictionary that can be loaded with `whisper.load_model`
-        torch.save({"model_state_dict": ckp, "dims": asdict(self.model.module.dims)}, save_path)
-    
+        torch.save(
+            {"model_state_dict": ckp, "dims": asdict(self.model.module.dims)}, save_path
+        )
+
     def train(self):
         if self.gpu_id == 0:
             min_loss, init_wer = self._evaluate()
@@ -257,6 +278,7 @@ class Trainer:
 
                 self._save_checkpoint(f"{self.save_dir}/last_model.pt")
 
+
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -273,8 +295,6 @@ def infinite_iter(data_loader: DataLoader) -> Iterator:
     while True:
         for batch in data_loader:
             yield batch
-
-
 
 
 def prepare_dataloader(dataset: Dataset, batch_size: int):
@@ -317,20 +337,21 @@ def get_dataloaders(args, tokenizer, fp16, max_prompt_length, device):
             exit(1)
         print("Build train loader done, with {} batches".format(len(train_loader)))
         dev_loader = get_dataloader(
-                json=dev_json,
-                tokenizer=tokenizer,
-                batch_size=args.dev_batch_size,
-                fp16=fp16,
-                no_timestamps_training=args.no_timestamps_training,
-                max_prompt_length=max_prompt_length,
-                # always use prompts and timestamps for validation to make it deterministic
-                prompt_use_rate=1.0,
-                no_timestamps_rate=0.0,
-                shuffle=False,
-                workers=0,
-            )
+            json=dev_json,
+            tokenizer=tokenizer,
+            batch_size=args.dev_batch_size,
+            fp16=fp16,
+            no_timestamps_training=args.no_timestamps_training,
+            max_prompt_length=max_prompt_length,
+            # always use prompts and timestamps for validation to make it deterministic
+            prompt_use_rate=1.0,
+            no_timestamps_rate=0.0,
+            shuffle=False,
+            workers=0,
+        )
 
     return train_loader, dev_loader
+
 
 def ddp_setup(rank, world_size):
     """
@@ -340,35 +361,51 @@ def ddp_setup(rank, world_size):
     """
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12366"
-    init_process_group(backend="nccl", rank=rank, world_size=world_size) # Options NCCl, Gloo, MPI
+    init_process_group(
+        backend="nccl", rank=rank, world_size=world_size
+    )  # Options NCCl, Gloo, MPI
+
 
 def load_train_objs(args):
     tokenizer = get_tokenizer(multilingual=".en" not in args.model, task="transcribe")
     # DDP doesnt support sparse tensors. Newest version of whisper is saving sparse vectors to reister_buffers
     # So we need to load the model and then load it as a whsiper_no_sparse model
-    model_with_sparse = whisper.load_model(args.model, device='cpu')
-    model = Whisper_no_sparse(model_with_sparse.dims).to('cpu')
+    model_with_sparse = whisper.load_model(args.model, device="cpu")
+    model = Whisper_no_sparse(model_with_sparse.dims).to("cpu")
     model.load_state_dict(model_with_sparse.state_dict())
     return tokenizer, model
+
 
 def get_optimizer_scheduler(model, args):
     if args.use_adam_8bit:
         try:
             import bitsandbytes as bnb
         except ImportError:
-            raise ImportError("For using Adam 8bit optimizer you need to have bitsandbytes installed.")
+            raise ImportError(
+                "For using Adam 8bit optimizer you need to have bitsandbytes installed."
+            )
         optimizer = bnb.optim.Adam8bit(model.parameters(), lr=args.lr)
     else:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, eps=args.adam_eps, betas=(0.9, 0.98))
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            eps=args.adam_eps,
+            betas=(0.9, 0.98),
+        )
     scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=args.train_steps
+        optimizer,
+        num_warmup_steps=args.warmup_steps,
+        num_training_steps=args.train_steps,
     )
     return optimizer, scheduler
+
+
 def main(rank, args, world_size):
     print(f"Running on {rank}")
     set_seed(args.seed)
     torch.backends.cudnn.benchmark = False
-    
+
     ddp_setup(rank, world_size)
     tokenizer, model = load_train_objs(args)
     optimizer, scheduler = get_optimizer_scheduler(model, args)
@@ -376,7 +413,9 @@ def main(rank, args, world_size):
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
     max_prompt_length = model.dims.n_text_ctx // 2 - 1
     fp16 = args.device == "cuda"
-    train_data, dev_data = get_dataloaders(args, tokenizer, fp16, max_prompt_length, rank)
+    train_data, dev_data = get_dataloaders(
+        args, tokenizer, fp16, max_prompt_length, rank
+    )
     # to be able to shuffle the data
     train_data.sampler.set_epoch(0)
     train_data = infinite_iter(train_data)
@@ -394,11 +433,12 @@ def main(rank, args, world_size):
     trainer.train()
     destroy_process_group()
 
+
 if __name__ == "__main__":
     args = get_parser().parse_args()
     world_size = torch.cuda.device_count()
     print(f"Using {world_size } GPUs")
     Path(args.save_dir).mkdir(parents=True, exist_ok=True)
     save_args(args, f"{args.save_dir}/args.json")
-    mp.spawn(main, args=(args,world_size), nprocs=world_size)
+    mp.spawn(main, args=(args, world_size), nprocs=world_size)
     # writer.close()

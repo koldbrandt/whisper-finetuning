@@ -33,7 +33,9 @@ def get_parser() -> argparse.ArgumentParser:
         help="Evaluation metric",
     )
     parser.add_argument(
-        "--verbose", action="store_true", help="Print out the evaluation results of each file"
+        "--verbose",
+        action="store_true",
+        help="Print out the evaluation results of each file",
     )
     return parser
 
@@ -61,25 +63,35 @@ def main():
 
         if (Path(args.transcript_dir) / f"{speech_id}.srt").exists():
             transcript_path = Path(args.transcript_dir) / f"{speech_id}.srt"
-            reference_text = srt_to_text(transcript_path, utterance_separator=utterance_separator)
+            reference_text = srt_to_text(
+                transcript_path, utterance_separator=utterance_separator
+            )
         elif (Path(args.transcript_dir) / f"{speech_id}.vtt").exists():
             transcript_path = Path(args.transcript_dir) / f"{speech_id}.vtt"
-            reference_text = vtt_to_text(transcript_path, utterance_separator=utterance_separator)
+            reference_text = vtt_to_text(
+                transcript_path, utterance_separator=utterance_separator
+            )
         else:
             raise FileNotFoundError(f"Transcript file not found for {speech_id}")
 
-        recognized_text = srt_to_text(recognized_path, utterance_separator=utterance_separator)
+        recognized_text = srt_to_text(
+            recognized_path, utterance_separator=utterance_separator
+        )
         reference_texts.append(reference_text)
         recognized_texts.append(recognized_text)
 
-        score = evaluator.compute(references=[reference_text], predictions=[recognized_text])
+        score = evaluator.compute(
+            references=[reference_text], predictions=[recognized_text]
+        )
         if args.verbose:
             tqdm.write(f"Processing: {recognized_path}")
             tqdm.write(f"    {args.metric}: {score}")
         score_sum += score
 
     print(f"Unweighted Average {args.metric}: {score_sum / len(reference_texts)}")
-    weighted_average = evaluator.compute(references=reference_texts, predictions=recognized_texts)
+    weighted_average = evaluator.compute(
+        references=reference_texts, predictions=recognized_texts
+    )
     print(f"Weighted Average {args.metric}: {weighted_average}")
 
 

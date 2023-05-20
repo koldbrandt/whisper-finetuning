@@ -38,7 +38,9 @@ class AudioDataset(Dataset):
 
     def _get_prompt_tokens(self, prompt: str) -> List[int]:
         if len(prompt) > 0 and torch.rand(1) < self.prompt_use_rate:
-            prompt_tokens = self._encode_text_with_timestamps(prompt)[-self.max_prompt_length :]
+            prompt_tokens = self._encode_text_with_timestamps(prompt)[
+                -self.max_prompt_length :
+            ]
             prompt_tokens = [self.tokenizer.sot_prev] + prompt_tokens
         else:
             prompt_tokens = []
@@ -90,16 +92,23 @@ class AudioDataset(Dataset):
         else:
             return None
 
-    def _get_text_tokens(self, text: str, no_timestamps: bool) -> Tuple[List[int], Optional[float]]:
+    def _get_text_tokens(
+        self, text: str, no_timestamps: bool
+    ) -> Tuple[List[int], Optional[float]]:
         text_tokens = self._encode_text_with_timestamps(text)
         next_partial_segment_start = self._get_partial_segment_start(text_tokens)
         if no_timestamps:
-            text_tokens = list(filter(lambda x: x < self.tokenizer.timestamp_begin, text_tokens))
+            text_tokens = list(
+                filter(lambda x: x < self.tokenizer.timestamp_begin, text_tokens)
+            )
 
         return text_tokens, next_partial_segment_start
 
     def _calculate_mel(
-        self, audio_path: Union[str, List[float]], next_partial_segment_start: Optional[float], no_timestamps: bool
+        self,
+        audio_path: Union[str, List[float]],
+        next_partial_segment_start: Optional[float],
+        no_timestamps: bool,
     ) -> torch.Tensor:
         mel = log_mel_spectrogram(audio_path)
         if no_timestamps and next_partial_segment_start is not None:
@@ -111,7 +120,10 @@ class AudioDataset(Dataset):
         return mel
 
     def _construct_decoder_output(
-        self, prompt_tokens: List[int], special_tokens: List[int], text_tokens: List[int]
+        self,
+        prompt_tokens: List[int],
+        special_tokens: List[int],
+        text_tokens: List[int],
     ) -> List[int]:
         if len(prompt_tokens) == 0:
             decoder_output = special_tokens[1:] + text_tokens + [self.tokenizer.eot]
@@ -129,22 +141,36 @@ class AudioDataset(Dataset):
             )
         return decoder_output
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, index: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         record = self.records[index]
-        no_timestamps = self.no_timestamps_training or torch.rand(1) < self.no_timestamps_rate
+        no_timestamps = (
+            self.no_timestamps_training or torch.rand(1) < self.no_timestamps_rate
+        )
 
         prompt_tokens = self._get_prompt_tokens(record.prompt)
-        text_tokens, next_partial_segment_start = self._get_text_tokens(record.text, no_timestamps)
+        text_tokens, next_partial_segment_start = self._get_text_tokens(
+            record.text, no_timestamps
+        )
         is_text_empty = len(text_tokens) == 0
-        special_tokens = self._get_special_tokens(is_text_empty, record.language, no_timestamps)
+        special_tokens = self._get_special_tokens(
+            is_text_empty, record.language, no_timestamps
+        )
 
         decoder_input = prompt_tokens + special_tokens + text_tokens
         if len(decoder_input) > self.model_n_text_ctx:
-            raise ValueError(f"Input is too long: {record} (length: {len(decoder_input)})")
+            raise ValueError(
+                f"Input is too long: {record} (length: {len(decoder_input)})"
+            )
 
-        decoder_output = self._construct_decoder_output(prompt_tokens, special_tokens, text_tokens)
+        decoder_output = self._construct_decoder_output(
+            prompt_tokens, special_tokens, text_tokens
+        )
 
-        mel = self._calculate_mel(record.audio_path, next_partial_segment_start, no_timestamps)
+        mel = self._calculate_mel(
+            record.audio_path, next_partial_segment_start, no_timestamps
+        )
 
         return (
             mel,
@@ -171,7 +197,7 @@ def get_dataloader(
     prompt_use_rate: float = 0.5,
     no_timestamps_rate: float = 0.5,
     shuffle: bool = True,
-    workers = 4,
+    workers=4,
 ) -> DataLoader:
     records = []
     if isinstance(json, list):
@@ -197,6 +223,7 @@ def get_dataloader(
         collate_fn=collate_fn,
     )
 
+
 def get_dataset(
     json: Union[str, List[str]],
     tokenizer: Tokenizer,
@@ -221,4 +248,4 @@ def get_dataset(
         prompt_use_rate=prompt_use_rate,
         no_timestamps_rate=no_timestamps_rate,
     )
-    return dataset    
+    return dataset
