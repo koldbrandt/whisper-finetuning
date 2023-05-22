@@ -75,8 +75,8 @@ def main(args):
         args.hf_model, language=language, task=args.task
     )
 
-    common_voice = get_dataset_train_test(
-        args.cache_dir, args.cache_dir, feature_extractor, tokenizer, args.num_proc
+    datasets = get_dataset_train_test(
+        args.cache_dir, args.cache_dir, feature_extractor, tokenizer,["common_voice", "fleurs"] ,args.num_proc
     )
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
@@ -117,8 +117,8 @@ def main(args):
     trainer = Seq2SeqTrainer(
         args=training_args,
         model=model,
-        train_dataset=common_voice["train"],
-        eval_dataset=common_voice["test"],
+        train_dataset=datasets["train"],
+        eval_dataset=datasets["test"],
         data_collator=data_collator,
         # compute_metrics=compute_metrics,
         tokenizer=processor.feature_extractor,

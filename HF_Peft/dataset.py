@@ -2,11 +2,27 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 
 import torch
-from datasets import Audio, DatasetDict, load_dataset
+from datasets import Audio, DatasetDict, load_dataset, concatenate_datasets, Dataset
 
-dataset_name = "mozilla-foundation/common_voice_13_0"
 language = "Danish"
-language_abbr = "da"
+
+
+dataset_dict = {
+
+    "common_voice" : {
+        "name" : "mozilla-foundation/common_voice_13_0",
+        "language" : "Danish",
+        "language_abbr" : "da"
+    }, 
+    "fleurs" : {
+        "name" : "google/fleurs",
+        "language" : "Danish",
+        "language_abbr" : "da_dk"
+    }
+
+}
+
+
 
 
 @dataclass
@@ -62,6 +78,22 @@ def remove_commonvoice_columns(dataset):
     )
     return dataset
 
+def remove_fleurs_columns(dataset: DatasetDict):
+    dataset = dataset.remove_columns(
+        [
+            "id",
+            "num_samples",
+            "path",
+            "transcription",
+            "gender",
+            "lang_id",
+            "language",
+            "lang_group_id",
+        ]
+    )
+    dataset = dataset.rename_column("raw_transcription", "sentence")
+    return dataset
+
 
 def prepare_dataset(batch, feature_extractor, tokenizer):
     # load and resample audio data from 48 to 16kHz
@@ -101,11 +133,49 @@ def get_dataset_eval(feature_extractor, tokenizer, num_proc=4):
     return common_voice
 
 
+def get_dataset_dict_train_test(dataset_name: str, datadir: str, cachedir: str, datasetdict: DatasetDict):
+    temp_dataset = DatasetDict()
+    temp_dataset["train"] = load_dataset(
+            dataset_dict[dataset_name]["name"],
+            dataset_dict[dataset_name]["language_abbr"],
+            split="train",
+            use_auth_token=True,
+            data_dir=datadir,
+            cache_dir=cachedir,
+        )
+    temp_dataset["test"] = load_dataset(
+            dataset_dict[dataset_name]["name"],
+            dataset_dict[dataset_name]["language_abbr"],
+            split="validation",
+            use_auth_token=True,
+            data_dir=datadir,
+            cache_dir=cachedir,
+        )
+    if dataset_name == "common_voice":
+        temp_dataset = remove_commonvoice_columns(temp_dataset)
+    elif dataset_name == "fleurs":
+        temp_dataset = remove_fleurs_columns(temp_dataset)
+
+    temp_dataset = temp_dataset.cast_column("audio", Audio(sampling_rate=16000))
+
+    if "train" in datasetdict.keys() and "test" in datasetdict.keys():
+        datasetdict["train"] = concatenate_datasets([datasetdict["train"], temp_dataset["train"]])
+        datasetdict["test"] = concatenate_datasets([datasetdict["test"], temp_dataset["test"]])
+    else:
+        datasetdict["train"] = temp_dataset["train"]
+        datasetdict["test"] = temp_dataset["test"]
+    
+    return datasetdict
+    
+
+
+
 def get_dataset_train_test(
     datadir,
     cachedir,
     feature_extractor,
     tokenizer,
+    dataset_name: Union[str, list],
     num_proc=4,
 ):
     """
@@ -121,34 +191,20 @@ def get_dataset_train_test(
     Returns:
         common_voice (DatasetDict): DatasetDict containing train and test split.
     """
-    common_voice = DatasetDict()
 
-    common_voice["train"] = load_dataset(
-        dataset_name,
-        language_abbr,
-        split="train",
-        use_auth_token=True,
-        data_dir=datadir,
-        cache_dir=cachedir,
-    )
-    common_voice["test"] = load_dataset(
-        dataset_name,
-        language_abbr,
-        split="validation",
-        use_auth_token=True,
-        data_dir=datadir,
-        cache_dir=cachedir,
-    )
-
-    common_voice = remove_commonvoice_columns(common_voice)
-
-    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16000))
-
-    common_voice = common_voice.map(
+    if type(dataset_name) != list:
+        dataset_name = [dataset_name]
+    
+    datasets = DatasetDict()
+    
+    for dataset in dataset_name:
+        datasets = get_dataset_dict_train_test(dataset, datadir, cachedir, datasets)
+        
+    datasets = datasets.map(
         prepare_dataset,
-        remove_columns=common_voice.column_names["train"],
         num_proc=num_proc,
         fn_kwargs={"feature_extractor": feature_extractor, "tokenizer": tokenizer},
     )
 
-    return common_voice
+    return datasets
+
