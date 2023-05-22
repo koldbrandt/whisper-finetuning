@@ -24,6 +24,8 @@ def arrguement_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hf_model", type=str, help="huggingface model")
     parser.add_argument("--hf_finetuned", type=str, help="huggingface model")
+    parser.add_argument("--datadir", type=str, help="data directory", default="/work3/s183954/")
+    parser.add_argument("--cachedir", type=str, help="cache directory", default="/work3/s183954/")
     parser.add_argument("--batch_size", type=int, help="batch size", default=8)
     parser.add_argument(
         "--task", type=str, help="task to perform", default="transcribe"
@@ -49,10 +51,10 @@ def main(args):
         args.hf_model, language=language, task=args.task
     )
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.hf_model)
-    common_voice = get_dataset_eval(feature_extractor, tokenizer)
+    datasets = get_dataset_eval(args.datadir, args.cachedir ,feature_extractor, tokenizer, ["common_voice", "fleurs"])
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
     eval_dataloader = DataLoader(
-        common_voice["test"], batch_size=args.batch_size, collate_fn=data_collator
+        datasets["test"], batch_size=args.batch_size, collate_fn=data_collator
     )
     forced_decoder_ids = processor.get_decoder_prompt_ids(
         language=language, task=args.task

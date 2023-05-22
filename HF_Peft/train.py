@@ -76,7 +76,12 @@ def main(args):
     )
 
     datasets = get_dataset_train_test(
-        args.cache_dir, args.cache_dir, feature_extractor, tokenizer,["common_voice", "fleurs"] ,args.num_proc
+        args.cache_dir,
+        args.cache_dir,
+        feature_extractor,
+        tokenizer,
+        ["common_voice", "fleurs"],
+        args.num_proc,
     )
 
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)

@@ -8,21 +8,13 @@ language = "Danish"
 
 
 dataset_dict = {
-
-    "common_voice" : {
-        "name" : "mozilla-foundation/common_voice_13_0",
-        "language" : "Danish",
-        "language_abbr" : "da"
-    }, 
-    "fleurs" : {
-        "name" : "google/fleurs",
-        "language" : "Danish",
-        "language_abbr" : "da_dk"
-    }
-
+    "common_voice": {
+        "name": "mozilla-foundation/common_voice_13_0",
+        "language": "Danish",
+        "language_abbr": "da",
+    },
+    "fleurs": {"name": "google/fleurs", "language": "Danish", "language_abbr": "da_dk"},
 }
-
-
 
 
 @dataclass
@@ -78,6 +70,7 @@ def remove_commonvoice_columns(dataset):
     )
     return dataset
 
+
 def remove_fleurs_columns(dataset: DatasetDict):
     dataset = dataset.remove_columns(
         [
@@ -109,48 +102,71 @@ def prepare_dataset(batch, feature_extractor, tokenizer):
     return batch
 
 
-def get_dataset_eval(feature_extractor, tokenizer, num_proc=4):
-    common_voice = DatasetDict()
-
-    common_voice["test"] = load_dataset(
-        dataset_name,
-        language_abbr,
+def get_dataset_dict_test(
+    dataset_name: str, datadir: str, cachedir: str, datasetdict: DatasetDict
+):
+    temp_dataset = DatasetDict()
+    temp_dataset["test"] = load_dataset(
+        dataset_dict[dataset_name]["name"],
+        dataset_dict[dataset_name]["language_abbr"],
         split="test",
         use_auth_token=True,
-        data_dir="/work3/s183954/",
-        cache_dir="/work3/s183954/",
+        data_dir=datadir,
+        cache_dir=cachedir,
     )
 
-    common_voice = remove_commonvoice_columns(common_voice)
-    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16000))
+    if dataset_name == "common_voice":
+        temp_dataset = remove_commonvoice_columns(temp_dataset)
+    elif dataset_name == "fleurs":
+        temp_dataset = remove_fleurs_columns(temp_dataset)
 
-    common_voice = common_voice.map(
+    temp_dataset = temp_dataset.cast_column("audio", Audio(sampling_rate=16000))
+
+    if "test" in datasetdict.keys():
+        datasetdict["test"] = concatenate_datasets(
+            [datasetdict["test"], temp_dataset["test"]]
+        )
+    else:
+        datasetdict["test"] = temp_dataset["test"]
+
+    return datasetdict
+
+
+def get_dataset_eval(datadir, cachedir,feature_extractor, tokenizer, dataset_name, num_proc=4):
+    datasets = DatasetDict()
+
+    for dataset in dataset_name:
+        datasets = get_dataset_dict_test(dataset, datadir, cachedir, datasets)
+
+    datasets = datasets.map(
         prepare_dataset,
         num_proc=num_proc,
         fn_kwargs={"feature_extractor": feature_extractor, "tokenizer": tokenizer},
     )
 
-    return common_voice
+    return datasets
 
 
-def get_dataset_dict_train_test(dataset_name: str, datadir: str, cachedir: str, datasetdict: DatasetDict):
+def get_dataset_dict_train_test(
+    dataset_name: str, datadir: str, cachedir: str, datasetdict: DatasetDict
+):
     temp_dataset = DatasetDict()
     temp_dataset["train"] = load_dataset(
-            dataset_dict[dataset_name]["name"],
-            dataset_dict[dataset_name]["language_abbr"],
-            split="train",
-            use_auth_token=True,
-            data_dir=datadir,
-            cache_dir=cachedir,
-        )
+        dataset_dict[dataset_name]["name"],
+        dataset_dict[dataset_name]["language_abbr"],
+        split="train",
+        use_auth_token=True,
+        data_dir=datadir,
+        cache_dir=cachedir,
+    )
     temp_dataset["test"] = load_dataset(
-            dataset_dict[dataset_name]["name"],
-            dataset_dict[dataset_name]["language_abbr"],
-            split="validation",
-            use_auth_token=True,
-            data_dir=datadir,
-            cache_dir=cachedir,
-        )
+        dataset_dict[dataset_name]["name"],
+        dataset_dict[dataset_name]["language_abbr"],
+        split="validation",
+        use_auth_token=True,
+        data_dir=datadir,
+        cache_dir=cachedir,
+    )
     if dataset_name == "common_voice":
         temp_dataset = remove_commonvoice_columns(temp_dataset)
     elif dataset_name == "fleurs":
@@ -159,15 +175,17 @@ def get_dataset_dict_train_test(dataset_name: str, datadir: str, cachedir: str, 
     temp_dataset = temp_dataset.cast_column("audio", Audio(sampling_rate=16000))
 
     if "train" in datasetdict.keys() and "test" in datasetdict.keys():
-        datasetdict["train"] = concatenate_datasets([datasetdict["train"], temp_dataset["train"]])
-        datasetdict["test"] = concatenate_datasets([datasetdict["test"], temp_dataset["test"]])
+        datasetdict["train"] = concatenate_datasets(
+            [datasetdict["train"], temp_dataset["train"]]
+        )
+        datasetdict["test"] = concatenate_datasets(
+            [datasetdict["test"], temp_dataset["test"]]
+        )
     else:
         datasetdict["train"] = temp_dataset["train"]
         datasetdict["test"] = temp_dataset["test"]
-    
-    return datasetdict
-    
 
+    return datasetdict
 
 
 def get_dataset_train_test(
@@ -194,12 +212,12 @@ def get_dataset_train_test(
 
     if type(dataset_name) != list:
         dataset_name = [dataset_name]
-    
+
     datasets = DatasetDict()
-    
+
     for dataset in dataset_name:
         datasets = get_dataset_dict_train_test(dataset, datadir, cachedir, datasets)
-        
+
     datasets = datasets.map(
         prepare_dataset,
         num_proc=num_proc,
@@ -207,4 +225,3 @@ def get_dataset_train_test(
     )
 
     return datasets
-
