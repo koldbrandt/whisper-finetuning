@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument(
         "--output_audio", type=str, default="/work3/s183954/datasets/fleurs"
     )
-    parser.add_argument("--output", type=str, default="flerus_train")
+    parser.add_argument("--output", type=str, default="flerus")
     return parser.parse_args()
 
 
@@ -75,7 +75,7 @@ def main(args):
         write(path, 16000, audio)
         record = Record(audio_path=path, text=text, language=args.language)
         records.append(record)
-    DataProcessor.write_records(records, args.output)
+    DataProcessor.write_records(records, f"{args.output}_{args.split}")
 
 
 if __name__ == "__main__":
