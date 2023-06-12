@@ -34,6 +34,8 @@ wandb.init(
 )
 
 
+whisper_cache_dir = "/work3/s183954/whisper"
+
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fine-tune a Whisper model for ASR")
     # Dataloader-related arguments
@@ -97,6 +99,15 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lr", type=float, default=1e-5, help="Learning rate for training"
     )
+
+    parser.add_argument(
+        "--weight-decay", type=float, default=0.1, help="Weight decay for the optimizer"
+    )
+
+    parser.add_argument(
+        "--adam-eps", type=float, default=1e-6, help="Epsilon for the Adam optimizer"
+    )
+
     parser.add_argument(
         "--accum-grad-steps",
         type=int,
@@ -295,7 +306,7 @@ def main():
     tokenizer = get_tokenizer(multilingual=".en" not in args.model, task="transcribe")
     normalizer = get_normalizer(multilingual=".en" not in args.model)
 
-    model = whisper.load_model(args.model, args.device)
+    model = whisper.load_model(args.model, args.device, download_root=whisper_cache_dir)
     #  -1 is for the special token `sot_prev` and the other half is for the transcribed tokens
     max_prompt_length = model.dims.n_text_ctx // 2 - 1
 
@@ -352,7 +363,14 @@ def main():
             )
         optimizer = bnb.optim.Adam8bit(model.parameters(), lr=args.lr)
     else:
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        print("Using AdamW")
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            eps=args.adam_eps,
+            betas=(0.9, 0.98),
+        )
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=args.warmup_steps,
