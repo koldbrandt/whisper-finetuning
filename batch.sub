@@ -23,4 +23,4 @@ source /zhome/ad/4/137151/venv_new_torch/bin/activate
 
 # export CUDA_VISIBLE_DEVICES=0,1
 
-python run_finetuning_multi_gpu.py --train-folder=datasets/train/ --dev-folder=datasets/dev/ --batch-size=4 --no-timestamps-training --model=large --num-workers=1 --train-steps=500 --eval-steps=25 --accum-grad-steps=256
+python run_finetuning_multi_gpu.py --train-folder=datasets/train/ --dev-folder=datasets/dev/ --batch-size=4 --no-timestamps-training --model=large --num-workers=1 --eval-steps=500 --accum-grad-steps=256
