@@ -9,7 +9,7 @@ from create_data import DataProcessor, Record
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--path", type=str, default="/work3/s212373/common_voice_11")
+    parser.add_argument("--path", type=str, default="/work3/s212373/common_voice_13")
     parser.add_argument("--language", type=str, default="da")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument(
@@ -20,7 +20,7 @@ def parse_args():
     )
     parser.add_argument("--normalize_unicode", type=bool, default=False)
     parser.add_argument("--max_tokens_length", type=int, default=219)
-    parser.add_argument("--output", type=str, default="commonvoice_train")
+    parser.add_argument("--output", type=str, default="commonvoice")
     return parser.parse_args()
 
 
@@ -40,8 +40,9 @@ def process_dataset(dataset: pd.DataFrame, tokenizer, args):
             continue
         record = Record(audio_path=audio_path, text=text, language=args.language)
         records.append(record)
-    print(f"Saving {len(records)} records to {args.output}")
-    DataProcessor.write_records(records, args.output)
+    output = f"{args.output}_{args.split}"
+    print(f"Saving {len(records)} records to {output}")
+    DataProcessor.write_records(records, output)
 
 
 def main(args):
