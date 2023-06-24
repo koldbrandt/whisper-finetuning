@@ -14,7 +14,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import whisper
-from torch.distributed import destroy_process_group, init_process_group
+from torch.distributed import destroy_process_group, init_process_group, barrier
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
@@ -165,6 +165,9 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
+whisper_cache_dir = "/work3/s183954/whisper"
+
 class Trainer:
     def __init__(
         self,
@@ -228,7 +231,7 @@ class Trainer:
 
     @torch.no_grad()
     def _evaluate(self):
-        self.model.eval()
+        self.model.module.eval()
         total_loss = 0
         total_wer = 0
         for x, y_in, y_out in tqdm(self.dev_data):
@@ -237,7 +240,7 @@ class Trainer:
                 y_in.to(self.gpu_id),
                 y_out.to(self.gpu_id),
             )
-            logits = self.model(x, y_in)
+            logits = self.model.module(x, y_in)
             loss = F.cross_entropy(logits.transpose(1, 2), y_out)
             wer = calculate_WER(
                 logits.argmax(dim=-1), y_out, self.normalizer, self.tokenizer
@@ -255,28 +258,36 @@ class Trainer:
 
     def train(self):
         if self.gpu_id == 0:
+            print("Running initial evaluation... on GPU 0")
             min_loss, init_wer = self._evaluate()
             wandb.log({"Loss/eval": min_loss, "WER/eval": init_wer}, step=0)
             print(f"Initial loss: {min_loss}, Initial WER: {init_wer}")
+
+        barrier()
+        print(f"Starting training on GPU {self.gpu_id}")
         for step in range(1, self.train_steps + 1):
             start = time.time()
             train_loss = self._train_step()
             # writer.add_scalar("Loss/train", train_loss, step)
             wandb.log({"Loss/train": train_loss}, step=step)
             end = time.time()
-            print(f"Step {step}: training loss={train_loss}, time={end-start}")
-            if step % self.eval_steps == 0 and self.gpu_id == 0:
-                eval_loss, eval_wer = self._evaluate()
-                # writer.add_scalar("Loss/eval", eval_loss, step)
-                wandb.log({"Loss/eval": eval_loss, "WER/eval": eval_wer}, step=step)
-                tqdm.write(f"Step {step}: validation loss={eval_loss}")
-                if eval_loss < min_loss:
-                    min_loss = eval_loss
-                    self._save_checkpoint(f"{self.save_dir}/best_model.pt")
-                if self.save_all_checkpoints:
-                    self._save_checkpoint(f"{self.save_dir}/step{step}.pt")
+            if step % 10 == 0:
+                print(f"Step {step}: training loss={train_loss}, time={end-start}, gpu={self.gpu_id}")
+            if step % self.eval_steps == 0:
+                if self.gpu_id == 0:
+                    eval_loss, eval_wer = self._evaluate()
+                    # writer.add_scalar("Loss/eval", eval_loss, step)
+                    wandb.log({"Loss/eval": eval_loss, "WER/eval": eval_wer}, step=step)
+                    tqdm.write(f"Step {step}: validation loss={eval_loss}")
+                    if eval_loss < min_loss:
+                        min_loss = eval_loss
+                        self._save_checkpoint(f"{self.save_dir}/best_model.pt")
+                    if self.save_all_checkpoints:
+                        self._save_checkpoint(f"{self.save_dir}/step{step}.pt")
 
-                self._save_checkpoint(f"{self.save_dir}/last_model.pt")
+                    self._save_checkpoint(f"{self.save_dir}/last_model.pt")
+                barrier()
+
 
 
 def set_seed(seed: int):
@@ -364,13 +375,14 @@ def ddp_setup(rank, world_size):
     init_process_group(
         backend="nccl", rank=rank, world_size=world_size
     )  # Options NCCl, Gloo, MPI
+    torch.cuda.set_device(rank)
 
 
 def load_train_objs(args):
     tokenizer = get_tokenizer(multilingual=".en" not in args.model, task="transcribe")
     # DDP doesnt support sparse tensors. Newest version of whisper is saving sparse vectors to reister_buffers
     # So we need to load the model and then load it as a whsiper_no_sparse model
-    model_with_sparse = whisper.load_model(args.model, device="cpu")
+    model_with_sparse = whisper.load_model(args.model, device="cpu", download_root=whisper_cache_dir)
     model = Whisper_no_sparse(model_with_sparse.dims).to("cpu")
     model.load_state_dict(model_with_sparse.state_dict())
     return tokenizer, model
