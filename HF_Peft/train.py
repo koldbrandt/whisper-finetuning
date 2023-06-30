@@ -36,6 +36,7 @@ def arrguement_parser():
     )
     parser.add_argument("--batch_size", type=int, help="batch size", default=16)
     parser.add_argument("--num_proc", type=int, help="number of processes", default=8)
+    parser.add_argument("--accumulation_steps", type=int, help="accumulation steps", default=1)
     return parser.parse_args()
 
 
@@ -134,8 +135,8 @@ def main(args):
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,  # change to a repo name of your choice
         per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=1,  
-        learning_rate=2e-4,
+        gradient_accumulation_steps=args.accumulation_steps,  
+        learning_rate=1e-5,
         warmup_steps=50,
         num_train_epochs=3,
         evaluation_strategy="steps",
@@ -147,9 +148,9 @@ def main(args):
         label_names=["labels"],  # same reason as above
         logging_first_step=True,
         load_best_model_at_end=True,
-        # metric_for_best_model="wer",
-        # greater_is_better=False,
-        # eval_accumulation_steps=1,
+        metric_for_best_model="wer",
+        greater_is_better=False,
+        report_to="wandb",
     )
 
     trainer = Seq2SeqTrainer(
