@@ -1,4 +1,4 @@
-# [Work In Progress] whisper-finetuning
+# whisper-finetuning
 This is a collection of scripts that can be used to fine-tune a Whisper model using <strong>time-aligned</strong> transcriptions and audio files.
 Although there are already codes available for fine-tuning a Whisper model, such as the one provided by the Hugging Face transformers library (https://huggingface.co/blog/fine-tune-whisper), they only offer a way to fine-tune a model using transcripts <strong>without timestamps</strong>.
 This makes it difficult to output timestamps along with the transcriptions.
@@ -43,7 +43,7 @@ python create_data.py --audio-dir <path-to-dev-audio-dir> --transcript-dir <path
 ```
 For all available options, see `python create_data.py --help`.
 
-### 2. Finetune a model
+### 2.0 Finetune a model
 You can finetune a model with the jsonl files generated in the previous step:
 ```
 python run_finetuning.py --train-json <path-to-train.json> --dev-json <path-to-dev.json> --model <model-name>
@@ -51,6 +51,12 @@ python run_finetuning.py --train-json <path-to-train.json> --dev-json <path-to-d
 You can use the `--use-adam-8bit` flag to utilize the Adam 8bit optimizer from `bitsandbytes`. This will reduce VRAM usage and allows to train using small multimodal models with 8GB of VRAM.
 
 For all available options, see `python run_finetuning.py --help`.
+
+### 2.1 Finetune a model Multi Gpu
+It is possible to train the model using multiple GPU's as long as they are on the same host.
+```
+python run_finetuning_multi_gpu.py --train-json <path-to-train.json> --dev-json <path-to-dev.json> --model <model-name>
+```
 
 ### 3. Transcribe audio files
 You can transcribe audio files using the finetuned model by running the command:
